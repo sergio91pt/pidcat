@@ -46,6 +46,8 @@ parser.add_argument('-i', '--ignore-tag', dest='ignored_tag', action='append', h
 parser.add_argument('-v', '--version', action='version', version='%(prog)s ' + __version__, help='Print the version number and exit')
 parser.add_argument('--time', dest='add_time', action='store_true', help='Include the timestamp in the log output')
 parser.add_argument('--date', dest='add_date', action='store_true', help='Include the date in the log output')
+parser.add_argument('--thread', dest='add_thread', action='store_true', help='Include the thread id in the log output')
+parser.add_argument('--color-thread', dest='color_thread', action='store_true', help='Color thread id')
 
 args = parser.parse_args()
 min_level = LOG_LEVELS_MAP[args.min_level.upper()]
@@ -98,6 +100,7 @@ def indent_wrap(message):
 
 
 LAST_USED = [RED, GREEN, YELLOW, BLUE, MAGENTA, CYAN]
+LAST_USED_TID = [RED, GREEN, YELLOW, BLUE, MAGENTA, CYAN]
 KNOWN_TAGS = {
   'dalvikvm': WHITE,
   'Process': WHITE,
@@ -108,6 +111,7 @@ KNOWN_TAGS = {
   'StrictMode': WHITE,
   'DEBUG': YELLOW,
 }
+KNOWN_THREADS = {}
 
 def allocate_color(tag):
   # this will allocate a unique format for the given tag
@@ -120,6 +124,14 @@ def allocate_color(tag):
     LAST_USED.append(color)
   return color
 
+def allocate_thread_color(tid):
+  if tid not in KNOWN_THREADS:
+    KNOWN_THREADS[tag] = LAST_USED_TID[0]
+  color = KNOWN_THREADS[tid]
+  if color in LAST_USED_TID:
+    LAST_USED_TID.remove(color)
+    LAST_USED_TID.append(color)
+  return color
 
 RULES = {
   # StrictMode policy violation; ~duration=319 ms: android.os.StrictMode$StrictModeDiskWriteViolation: policy=31 violation=1
@@ -152,7 +164,7 @@ PID_START_DALVIK = re.compile(r'^E/dalvikvm\(\s*(\d+)\): >>>>> ([a-zA-Z0-9._:]+)
 PID_KILL  = re.compile(r'^Killing (\d+):([a-zA-Z0-9._:]+)/[^:]+: (.*)$')
 PID_LEAVE = re.compile(r'^No longer want ([a-zA-Z0-9._:]+) \(pid (\d+)\): .*$')
 PID_DEATH = re.compile(r'^Process ([a-zA-Z0-9._:]+) \(pid (\d+)\) has died.?$')
-LOG_LINE  = re.compile(r'^(?P<timestamp>\d{2}\-\d{2}\s+\d{2}\:\d{2}\:\d{2}\.\d{3})?\s*(?P<level>[A-Z])/(?P<tag>.+?)\( *(?P<owner>\d+)\): (?P<message>.*?)$')
+LOG_LINE  = re.compile(r'^(?P<timestamp>\d{2}\-\d{2}\s+\d{2}\:\d{2}\:\d{2}\.\d{3})\s+(?P<owner>\d+)\s+(?P<thread>\d+) (?P<level>[A-Z]) (?P<tag>.+?): (?P<message>.*?)$')
 BUG_LINE  = re.compile(r'.*nativeGetEnabledTags.*')
 BACKTRACE_LINE = re.compile(r'^#(.*?)pc\s(.*?)$')
 
@@ -165,10 +177,8 @@ if args.use_emulator:
   base_adb_command.append('-e')
 adb_command = base_adb_command[:]
 adb_command.append('logcat')
-
-if args.add_time or args.add_date:
-  adb_command.append('-v')
-  adb_command.append('time')
+adb_command.append('-v')
+adb_command.append('threadtime')
 
 # Clear log before starting logcat
 if args.clear_logcat:
@@ -277,13 +287,11 @@ while adb.poll() is None:
   if log_line is None:
     continue
 
-  timestamp = ''
-  if 'timestamp' in log_line.groupdict():
-    timestamp = log_line.group('timestamp')
-
+  timestamp = log_line.group('timestamp')
+  owner = log_line.group('owner')
+  thread = log_line.group('thread')
   level = log_line.group('level')
   tag = log_line.group('tag').strip()
-  owner = log_line.group('owner')
   message = log_line.group('message')
  
   start = parse_start_proc(line)
@@ -353,15 +361,21 @@ while adb.poll() is None:
     replace = RULES[matcher]
     message = matcher.sub(replace, message)
 
+  if args.add_thread or args.color_thread:
+    tid = thread
+    if args.color_thread:
+      tid = colorize(tid, fg=allocate_color(tid))
+    message = tid + '  ' + message
+
   timefields = []
-  if timestamp and args.add_date:
+  if args.add_date:
     timefields.append(timestamp.split(' ', 1)[0])
 
-  if timestamp and args.add_time:
+  if args.add_time:
     timefields.append(timestamp.split(' ', 1)[1])
 
   if len(timefields):
-      message = ' '.join(timefields) + " | " + message
+      message = ' '.join(timefields) + '  ' + message
 
   linebuf += indent_wrap(message)
   print(linebuf.encode('utf-8'))
