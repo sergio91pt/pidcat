@@ -125,8 +125,9 @@ def allocate_color(tag):
   return color
 
 def allocate_thread_color(tid):
+  tid = str(tid)
   if tid not in KNOWN_THREADS:
-    KNOWN_THREADS[tag] = LAST_USED_TID[0]
+    KNOWN_THREADS[tid] = LAST_USED_TID[0]
   color = KNOWN_THREADS[tid]
   if color in LAST_USED_TID:
     LAST_USED_TID.remove(color)
@@ -364,7 +365,7 @@ while adb.poll() is None:
   if args.add_thread or args.color_thread:
     tid = thread
     if args.color_thread:
-      tid = colorize(tid, fg=allocate_color(tid))
+      tid = colorize(tid, fg=allocate_thread_color(tid))
     message = tid + '  ' + message
 
   timefields = []
